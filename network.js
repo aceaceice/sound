@@ -3,18 +3,18 @@
  * Handles device discovery and audio data transmission
  */
 
-const dgram = require('dgram');
-const os = require('os');
+const dgram = require("dgram");
+const os = require("os");
 
 class SoundCheckNetwork {
   constructor(options = {}) {
     this.port = options.port || 4000;
     this.broadcastPort = options.broadcastPort || 4001;
-    this.deviceName = options.deviceName || 'Unknown Device';
+    this.deviceName = options.deviceName || "Unknown Device";
     this.isSender = options.isSender || false;
-    this.onAudioData = options.onAudioData || (() => { });
-    this.onDeviceFound = options.onDeviceFound || (() => { });
-    this.onDeviceLost = options.onDeviceLost || (() => { });
+    this.onAudioData = options.onAudioData || (() => {});
+    this.onDeviceFound = options.onDeviceFound || (() => {});
+    this.onDeviceLost = options.onDeviceLost || (() => {});
 
     this.audioSocket = null;
     this.discoverySocket = null;
@@ -23,6 +23,11 @@ class SoundCheckNetwork {
 
     // For senders: keep track of who asked for audio
     this.subscribers = new Set();
+
+    // For senders: calculating latency
+    this.pingInterval = null;
+    this.latencies = new Map(); // ip:port -> latency ms
+    this.onLatencyUpdate = options.onLatencyUpdate || (() => {});
   }
 
   async start() {
@@ -33,30 +38,40 @@ class SoundCheckNetwork {
   async startDiscovery() {
     return new Promise((resolve, reject) => {
       try {
-        this.discoverySocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+        this.discoverySocket = dgram.createSocket({
+          type: "udp4",
+          reuseAddr: true,
+        });
 
-        this.discoverySocket.on('message', (msg, rinfo) => {
+        this.discoverySocket.on("message", (msg, rinfo) => {
           const message = msg.toString();
 
-          if (message === 'DISCOVER') {
+          if (message === "DISCOVER") {
             this.broadcastPresence();
-          } else if (message.startsWith('DEVICE:')) {
-            const [, type, deviceName, ip, port] = message.split(':');
+          } else if (message.startsWith("DEVICE:")) {
+            const [, type, deviceName, ip, port] = message.split(":");
             const key = `${ip}:${port}`;
             this.knownDevices.set(key, {
               type,
               name: deviceName,
               ip,
               port: parseInt(port),
-              lastSeen: Date.now()
+              lastSeen: Date.now(),
             });
-            this.onDeviceFound({ type, name: deviceName, ip, port: parseInt(port) });
+            this.onDeviceFound({
+              type,
+              name: deviceName,
+              ip,
+              port: parseInt(port),
+            });
           }
         });
 
         this.discoverySocket.bind(this.broadcastPort, () => {
           this.discoverySocket.setBroadcast(true);
-          try { this.discoverySocket.setMulticastTTL(128); } catch (e) { }
+          try {
+            this.discoverySocket.setMulticastTTL(128);
+          } catch (e) {}
 
           this.broadcastPresence();
 
@@ -80,12 +95,18 @@ class SoundCheckNetwork {
   }
 
   broadcastPresence() {
-    const type = this.isSender ? 'SENDER' : 'RECEIVER';
+    const type = this.isSender ? "SENDER" : "RECEIVER";
     const message = `DEVICE:${type}:${this.deviceName}:${this.getLocalIP()}:${this.port}`;
     const buf = Buffer.from(message);
 
     try {
-      this.discoverySocket.send(buf, 0, buf.length, this.broadcastPort, '255.255.255.255');
+      this.discoverySocket.send(
+        buf,
+        0,
+        buf.length,
+        this.broadcastPort,
+        "255.255.255.255",
+      );
     } catch (err) {
       // Ignore broadcast errors
     }
@@ -95,26 +116,53 @@ class SoundCheckNetwork {
     const interfaces = os.networkInterfaces();
     for (const name of Object.keys(interfaces)) {
       for (const iface of interfaces[name]) {
-        if (iface.family === 'IPv4' && !iface.internal) {
+        if (iface.family === "IPv4" && !iface.internal) {
           return iface.address;
         }
       }
     }
-    return '127.0.0.1';
+    return "127.0.0.1";
   }
 
   async startAudioServer() {
     return new Promise((resolve, reject) => {
       try {
-        this.audioSocket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+        this.audioSocket = dgram.createSocket({
+          type: "udp4",
+          reuseAddr: true,
+        });
 
-        this.audioSocket.on('message', (msg, rinfo) => {
-          if (msg.toString() === 'SUBSCRIBE' && this.isSender) {
+        this.audioSocket.on("message", (msg, rinfo) => {
+          const msgStr = msg.toString();
+          if (msgStr === "SUBSCRIBE" && this.isSender) {
             this.subscribers.add(`${rinfo.address}:${rinfo.port}`);
             return;
           }
-          if (msg.toString() === 'UNSUBSCRIBE' && this.isSender) {
+          if (msgStr === "UNSUBSCRIBE" && this.isSender) {
             this.subscribers.delete(`${rinfo.address}:${rinfo.port}`);
+            return;
+          }
+          if (msgStr.startsWith("PING:") && !this.isSender) {
+            // Instantly reply with PONG and the same timestamp
+            const pong = Buffer.from(msgStr.replace("PING:", "PONG:"));
+            this.audioSocket.send(
+              pong,
+              0,
+              pong.length,
+              rinfo.port,
+              rinfo.address,
+            );
+            return;
+          }
+          if (msgStr.startsWith("PONG:") && this.isSender) {
+            // Calculate RTT
+            const timestamp = parseInt(msgStr.split(":")[1], 10);
+            const rtt = Date.now() - timestamp;
+            const oneWay = Math.round(rtt / 2);
+
+            const clientKey = `${rinfo.address}:${rinfo.port}`;
+            this.latencies.set(clientKey, oneWay);
+            this.onLatencyUpdate({ client: clientKey, latencyMs: oneWay });
             return;
           }
 
@@ -124,6 +172,26 @@ class SoundCheckNetwork {
 
         this.audioSocket.bind(this.port, () => {
           console.log(`Audio socket bound on port ${this.port}`);
+
+          if (this.isSender) {
+            this.pingInterval = setInterval(() => {
+              if (this.subscribers.size === 0) return;
+              const pingMsg = Buffer.from(`PING:${Date.now()}`);
+              for (const sub of this.subscribers) {
+                const [ip, port] = sub.split(":");
+                try {
+                  this.audioSocket.send(
+                    pingMsg,
+                    0,
+                    pingMsg.length,
+                    parseInt(port),
+                    ip,
+                  );
+                } catch (e) {}
+              }
+            }, 1000);
+          }
+
           resolve();
         });
       } catch (err) {
@@ -134,24 +202,25 @@ class SoundCheckNetwork {
 
   subscribeToSender(address, port) {
     if (this.audioSocket) {
-      const buf = Buffer.from('SUBSCRIBE');
+      const buf = Buffer.from("SUBSCRIBE");
       this.audioSocket.send(buf, 0, buf.length, port, address);
     }
   }
 
   unsubscribeFromSender(address, port) {
     if (this.audioSocket) {
-      const buf = Buffer.from('UNSUBSCRIBE');
+      const buf = Buffer.from("UNSUBSCRIBE");
       this.audioSocket.send(buf, 0, buf.length, port, address);
     }
   }
 
   sendAudioData(data) {
-    if (!this.audioSocket || !this.isSender || this.subscribers.size === 0) return;
+    if (!this.audioSocket || !this.isSender || this.subscribers.size === 0)
+      return;
 
     const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
     for (const sub of this.subscribers) {
-      const [ip, port] = sub.split(':');
+      const [ip, port] = sub.split(":");
       try {
         this.audioSocket.send(buf, 0, buf.length, parseInt(port), ip);
       } catch (err) {
@@ -168,11 +237,18 @@ class SoundCheckNetwork {
     if (this.discoveryInterval) {
       clearInterval(this.discoveryInterval);
     }
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+    }
     if (this.discoverySocket) {
-      try { this.discoverySocket.close(); } catch (e) { }
+      try {
+        this.discoverySocket.close();
+      } catch (e) {}
     }
     if (this.audioSocket) {
-      try { this.audioSocket.close(); } catch (e) { }
+      try {
+        this.audioSocket.close();
+      } catch (e) {}
     }
   }
 }

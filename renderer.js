@@ -12,279 +12,332 @@ let nextPlayTime = 0;
 const QUALITY_BITRATES = { low: 32000, medium: 64000, high: 128000 };
 
 async function setMode(mode) {
-    currentMode = mode;
-    const senderBtn = document.getElementById('senderBtn');
-    const receiverBtn = document.getElementById('receiverBtn');
-    const senderPanel = document.getElementById('senderPanel');
-    const receiverPanel = document.getElementById('receiverPanel');
+  currentMode = mode;
+  const senderBtn = document.getElementById("senderBtn");
+  const receiverBtn = document.getElementById("receiverBtn");
+  const senderPanel = document.getElementById("senderPanel");
+  const receiverPanel = document.getElementById("receiverPanel");
 
-    if (mode === 'sender') {
-        senderBtn.classList.add('active', 'sender');
-        receiverBtn.classList.remove('active', 'receiver');
-        senderPanel.classList.remove('hidden');
-        receiverPanel.classList.add('hidden');
-        await initAudioCapture();
-    } else if (mode === 'receiver') {
-        receiverBtn.classList.add('active', 'receiver');
-        senderBtn.classList.remove('active', 'sender');
-        receiverPanel.classList.remove('hidden');
-        senderPanel.classList.add('hidden');
-        await scanForDevices();
-    }
+  if (mode === "sender") {
+    senderBtn.classList.add("active", "sender");
+    receiverBtn.classList.remove("active", "receiver");
+    senderPanel.classList.remove("hidden");
+    receiverPanel.classList.add("hidden");
+    await initAudioCapture();
+  } else if (mode === "receiver") {
+    receiverBtn.classList.add("active", "receiver");
+    senderBtn.classList.remove("active", "sender");
+    receiverPanel.classList.remove("hidden");
+    senderPanel.classList.add("hidden");
+    await scanForDevices();
+  }
 }
 
 async function initAudioCapture() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioInputs = devices.filter((d) => d.kind === "audioinput");
+
+    // Also fetch desktop sources (internal audio)
+    let desktopSources = [];
     try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const audioInputs = devices.filter(d => d.kind === 'audioinput');
-
-        // Also fetch desktop sources (internal audio)
-        let desktopSources = [];
-        try {
-            desktopSources = await window.electronAPI.getDesktopSources();
-        } catch (e) {
-            console.warn('Could not fetch desktop sources:', e);
-        }
-
-        const select = document.getElementById('audioInput');
-
-        let optionsHtml = '<optgroup label="Microphones">';
-        optionsHtml += audioInputs.map(d => `<option value="${d.deviceId}">${d.label || 'Microphone'}</option>`).join('');
-        optionsHtml += '</optgroup>';
-
-        if (desktopSources.length > 0) {
-            // Find global screens first
-            const screens = desktopSources.filter(s => s.isScreen);
-            const windows = desktopSources.filter(s => !s.isScreen);
-
-            if (screens.length > 0) {
-                optionsHtml += '<optgroup label="System Audio (Entire System)">';
-                optionsHtml += screens.map(s => `<option value="desktop:${s.id}">${s.name === 'Entire Screen' || s.name.includes('Screen') ? 'Global System Audio' : s.name}</option>`).join('');
-                optionsHtml += '</optgroup>';
-            }
-
-            if (windows.length > 0) {
-                optionsHtml += '<optgroup label="System Audio (Specific Application)">';
-                optionsHtml += windows.map(s => `<option value="desktop:${s.id}">${s.name}</option>`).join('');
-                optionsHtml += '</optgroup>';
-            }
-        }
-
-        select.innerHTML = optionsHtml;
-    } catch (err) {
-        console.error('Error enumerating audio devices:', err);
+      desktopSources = await window.electronAPI.getDesktopSources();
+    } catch (e) {
+      console.warn("Could not fetch desktop sources:", e);
     }
+
+    const select = document.getElementById("audioInput");
+
+    let optionsHtml = '<optgroup label="Microphones">';
+    optionsHtml += audioInputs
+      .map(
+        (d) =>
+          `<option value="${d.deviceId}">${d.label || "Microphone"}</option>`,
+      )
+      .join("");
+    optionsHtml += "</optgroup>";
+
+    if (desktopSources.length > 0) {
+      // Find global screens first
+      const screens = desktopSources.filter((s) => s.isScreen);
+      const windows = desktopSources.filter((s) => !s.isScreen);
+
+      if (screens.length > 0) {
+        optionsHtml += '<optgroup label="System Audio (Entire System)">';
+        optionsHtml += screens
+          .map(
+            (s) =>
+              `<option value="desktop:${s.id}">${s.name === "Entire Screen" || s.name.includes("Screen") ? "Global System Audio" : s.name}</option>`,
+          )
+          .join("");
+        optionsHtml += "</optgroup>";
+      }
+
+      if (windows.length > 0) {
+        optionsHtml += '<optgroup label="System Audio (Specific Application)">';
+        optionsHtml += windows
+          .map((s) => `<option value="desktop:${s.id}">${s.name}</option>`)
+          .join("");
+        optionsHtml += "</optgroup>";
+      }
+    }
+
+    select.innerHTML = optionsHtml;
+  } catch (err) {
+    console.error("Error enumerating audio devices:", err);
+  }
 }
 
 async function scanForDevices() {
-    const deviceList = document.getElementById('deviceList');
-    deviceList.innerHTML = '<p style="color: #888;">Scanning for devices...</p>';
-    await window.electronAPI.startStreaming({ mode: 'receiver', port: 0 });
+  const deviceList = document.getElementById("deviceList");
+  deviceList.innerHTML = '<p style="color: #888;">Scanning for devices...</p>';
+  await window.electronAPI.startStreaming({ mode: "receiver", port: 0 });
 }
 
 window.electronAPI.onNetworkEvent((data) => {
-    if (data.type === 'device-found' && data.device.type === 'SENDER' && currentMode === 'receiver') {
-        const deviceList = document.getElementById('deviceList');
-        if (deviceList.querySelector('p')) {
-            deviceList.innerHTML = '';
-        }
+  if (
+    data.type === "device-found" &&
+    data.device.type === "SENDER" &&
+    currentMode === "receiver"
+  ) {
+    const deviceList = document.getElementById("deviceList");
+    if (deviceList.querySelector("p")) {
+      deviceList.innerHTML = "";
+    }
 
-        const id = `device-${data.device.ip.replace(/\./g, '-')}-${data.device.port}`;
-        const existing = document.getElementById(id);
-        if (!existing) {
-            const div = document.createElement('div');
-            div.className = 'device-item';
-            div.id = id;
-            div.innerHTML = `
+    const id = `device-${data.device.ip.replace(/\./g, "-")}-${data.device.port}`;
+    const existing = document.getElementById(id);
+    if (!existing) {
+      const div = document.createElement("div");
+      div.className = "device-item";
+      div.id = id;
+      div.innerHTML = `
         <div class="device-info">
           <span class="device-name">${data.device.name}</span>
           <span class="device-ip">${data.device.ip}:${data.device.port}</span>
         </div>
         <button class="connect-btn connect" onclick="connectToDevice('${data.device.ip}', ${data.device.port})">Connect</button>
       `;
-            deviceList.appendChild(div);
-        }
-    } else if (data.type === 'device-lost') {
-        const id = `device-${data.device.ip.replace(/\./g, '-')}-${data.device.port}`;
-        const existing = document.getElementById(id);
-        if (existing) {
-            existing.remove();
-        }
+      deviceList.appendChild(div);
     }
+  } else if (data.type === "device-lost") {
+    const id = `device-${data.device.ip.replace(/\./g, "-")}-${data.device.port}`;
+    const existing = document.getElementById(id);
+    if (existing) {
+      existing.remove();
+    }
+  } else if (data.type === "latency-update" && currentMode === "sender") {
+    const lDisplay = document.getElementById("latencyNumber");
+    if (lDisplay) {
+      // Sender gets true network ping latency
+      lDisplay.textContent = data.stats.latencyMs + "ms";
+    }
+  }
 });
 
 async function toggleStreaming() {
-    if (isStreaming) {
-        await stopStreaming();
-    } else {
-        await startStreaming();
-    }
+  if (isStreaming) {
+    await stopStreaming();
+  } else {
+    await startStreaming();
+  }
 }
 
 async function startStreaming() {
-    const port = parseInt(document.getElementById('port').value);
-    const audioInputId = document.getElementById('audioInput').value;
+  const port = parseInt(document.getElementById("port").value);
+  const audioInputId = document.getElementById("audioInput").value;
 
-    try {
-        await window.electronAPI.startStreaming({ mode: 'sender', port });
+  try {
+    await window.electronAPI.startStreaming({ mode: "sender", port });
 
-        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    audioContext = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: 48000,
+    });
 
-        let userMediaConstraints = {};
-        if (audioInputId && audioInputId.startsWith('desktop:')) {
-            const sourceId = audioInputId.replace('desktop:', '');
-            // Request desktop audio loopback
-            userMediaConstraints = {
-                audio: {
-                    mandatory: {
-                        chromeMediaSource: 'desktop'
-                    }
-                },
-                video: {
-                    mandatory: {
-                        chromeMediaSource: 'desktop',
-                        chromeMediaSourceId: sourceId
-                    }
-                }
-            };
-        } else {
-            // Standard microphone
-            userMediaConstraints = {
-                audio: {
-                    deviceId: audioInputId ? { exact: audioInputId } : undefined,
-                    echoCancellation: false,
-                    noiseSuppression: false,
-                    autoGainControl: false,
-                    latency: 0
-                }
-            };
-        }
-
-        mediaStream = await navigator.mediaDevices.getUserMedia(userMediaConstraints);
-
-        // If we captured desktop, it returns both video and audio. We only want the audio track!
-        const audioTrack = mediaStream.getAudioTracks()[0];
-        if (!audioTrack) {
-            throw new Error("No audio track found in the selected source. Your OS might not support loopback for this source.");
-        }
-
-        // Create a new stream with JUST the audio track so the video track is dropped.
-        const audioOnlyStream = new MediaStream([audioTrack]);
-
-        audioSource = audioContext.createMediaStreamSource(audioOnlyStream);
-        analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
-        audioSource.connect(analyser);
-
-        await audioContext.audioWorklet.addModule('audio-processor.js');
-        audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
-        audioSource.connect(audioWorkletNode);
-
-        audioWorkletNode.port.onmessage = (event) => {
-            if (isStreaming && event.data && event.data.type === 'audio') {
-                window.electronAPI.sendAudioData({ buffer: event.data.data });
-            }
-        };
-
-        updateStatus('streaming', 'Streaming audio...');
-        isStreaming = true;
-        document.getElementById('startBtn').textContent = 'Stop Streaming';
-        document.getElementById('startBtn').classList.remove('start');
-        document.getElementById('startBtn').classList.add('stop');
-        startAudioLevelMeter();
-
-    } catch (err) {
-        console.error('Error starting audio stream:', err);
-        updateStatus('error', 'Error: ' + err.message);
+    let userMediaConstraints = {};
+    if (audioInputId && audioInputId.startsWith("desktop:")) {
+      const sourceId = audioInputId.replace("desktop:", "");
+      // Request desktop audio loopback
+      userMediaConstraints = {
+        audio: {
+          mandatory: {
+            chromeMediaSource: "desktop",
+          },
+        },
+        video: {
+          mandatory: {
+            chromeMediaSource: "desktop",
+            chromeMediaSourceId: sourceId,
+          },
+        },
+      };
+    } else {
+      // Standard microphone
+      userMediaConstraints = {
+        audio: {
+          deviceId: audioInputId ? { exact: audioInputId } : undefined,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          latency: 0,
+        },
+      };
     }
+
+    mediaStream =
+      await navigator.mediaDevices.getUserMedia(userMediaConstraints);
+
+    // If we captured desktop, it returns both video and audio. We only want the audio track!
+    const audioTrack = mediaStream.getAudioTracks()[0];
+    if (!audioTrack) {
+      throw new Error(
+        "No audio track found in the selected source. Your OS might not support loopback for this source.",
+      );
+    }
+
+    // Create a new stream with JUST the audio track so the video track is dropped.
+    const audioOnlyStream = new MediaStream([audioTrack]);
+
+    audioSource = audioContext.createMediaStreamSource(audioOnlyStream);
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    audioSource.connect(analyser);
+
+    await audioContext.audioWorklet.addModule("audio-processor.js");
+    audioWorkletNode = new AudioWorkletNode(audioContext, "audio-processor");
+    audioSource.connect(audioWorkletNode);
+
+    audioWorkletNode.port.onmessage = (event) => {
+      if (isStreaming && event.data && event.data.type === "audio") {
+        window.electronAPI.sendAudioData({ buffer: event.data.data });
+      }
+    };
+
+    updateStatus("streaming", "Streaming audio...");
+    isStreaming = true;
+    document.getElementById("startBtn").textContent = "Stop Streaming";
+    document.getElementById("startBtn").classList.remove("start");
+    document.getElementById("startBtn").classList.add("stop");
+    startAudioLevelMeter();
+  } catch (err) {
+    console.error("Error starting audio stream:", err);
+    updateStatus("error", "Error: " + err.message);
+  }
 }
 
 async function stopStreaming() {
-    if (mediaStream) {
-        mediaStream.getTracks().forEach(track => track.stop());
-    }
-    if (audioContext) {
-        await audioContext.close();
-    }
-    await window.electronAPI.stopStreaming();
-    isStreaming = false;
-    document.getElementById('startBtn').textContent = 'Start Streaming';
-    document.getElementById('startBtn').classList.remove('stop');
-    document.getElementById('startBtn').classList.add('start');
-    updateStatus('connected', 'Stopped');
+  if (mediaStream) {
+    mediaStream.getTracks().forEach((track) => track.stop());
+  }
+  if (audioContext) {
+    await audioContext.close();
+  }
+  await window.electronAPI.stopStreaming();
+  isStreaming = false;
+  document.getElementById("startBtn").textContent = "Start Streaming";
+  document.getElementById("startBtn").classList.remove("stop");
+  document.getElementById("startBtn").classList.add("start");
+  updateStatus("connected", "Stopped");
 }
 
 function startAudioLevelMeter() {
-    if (!analyser) return;
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
+  if (!analyser) return;
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
 
-    function updateLevel() {
-        if (!isStreaming) {
-            document.getElementById('audioLevel').style.width = '0%';
-            return;
-        }
-        analyser.getByteFrequencyData(dataArray);
-        const average = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
-        const percent = (average / 255) * 100;
-        document.getElementById('audioLevel').style.width = percent + '%';
-        requestAnimationFrame(updateLevel);
+  function updateLevel() {
+    if (!isStreaming) {
+      document.getElementById("audioLevel").style.width = "0%";
+      return;
     }
-    updateLevel();
+    analyser.getByteFrequencyData(dataArray);
+    const average = dataArray.reduce((a, b) => a + b, 0) / bufferLength;
+    const percent = (average / 255) * 100;
+    document.getElementById("audioLevel").style.width = percent + "%";
+    requestAnimationFrame(updateLevel);
+  }
+  updateLevel();
 }
 
 let connectedSender = null;
 
 async function connectToDevice(ip, port) {
-    if (connectedSender) {
-        window.electronAPI.unsubscribeDevice(connectedSender);
-    }
+  if (connectedSender) {
+    window.electronAPI.unsubscribeDevice(connectedSender);
+  }
 
-    connectedSender = { ip, port };
-    window.electronAPI.subscribeDevice(connectedSender);
+  connectedSender = { ip, port };
+  window.electronAPI.subscribeDevice(connectedSender);
 
-    updateStatus('connected', `Connected to ${ip}:${port}`);
+  updateStatus("connected", `Connected to ${ip}:${port}`);
 
-    if (!audioContext) {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
-    }
-    if (audioContext.state === 'suspended') {
-        await audioContext.resume();
-    }
+  if (!audioContext) {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: 48000,
+    });
+  }
+  if (audioContext.state === "suspended") {
+    await audioContext.resume();
+  }
 }
 
 window.electronAPI.onAudioData((payload) => {
-    if (currentMode !== 'receiver' || !audioContext) return;
+  if (currentMode !== "receiver" || !audioContext) return;
 
-    const { data } = payload;
+  const { data } = payload;
 
-    const int16Array = new Int16Array(data.buffer, data.byteOffset, data.length / 2);
-    const float32Array = new Float32Array(int16Array.length);
-    for (let i = 0; i < int16Array.length; i++) {
-        float32Array[i] = int16Array[i] / 32768.0;
-    }
+  const int16Array = new Int16Array(
+    data.buffer,
+    data.byteOffset,
+    data.length / 2,
+  );
+  const float32Array = new Float32Array(int16Array.length);
+  for (let i = 0; i < int16Array.length; i++) {
+    float32Array[i] = int16Array[i] / 32768.0;
+  }
 
-    const buffer = audioContext.createBuffer(1, float32Array.length, 48000);
-    buffer.copyToChannel(float32Array, 0);
+  const buffer = audioContext.createBuffer(1, float32Array.length, 48000);
+  buffer.copyToChannel(float32Array, 0);
 
-    const source = audioContext.createBufferSource();
-    source.buffer = buffer;
-    source.connect(audioContext.destination);
+  const source = audioContext.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audioContext.destination);
 
-    const now = audioContext.currentTime;
-    if (nextPlayTime < now) {
-        nextPlayTime = now + 0.05;
-    }
-    source.start(nextPlayTime);
-    nextPlayTime += buffer.duration;
+  const now = audioContext.currentTime;
+
+  // Drain buffer if latency gets higher than 100ms
+  if (nextPlayTime < now || nextPlayTime - now > 0.1) {
+    // Force buffer back to 50ms latency
+    nextPlayTime = now + 0.05;
+  }
+
+  source.start(nextPlayTime);
+  nextPlayTime += buffer.duration;
 });
 
+// Calculate local jitter buffer latency
+setInterval(() => {
+  if (currentMode === "receiver" && isStreaming && audioContext) {
+    const now = audioContext.currentTime;
+    const bufferLatencyMatch = Math.max(0, (nextPlayTime - now) * 1000);
+    const lDisplay = document.getElementById("latencyNumber");
+    if (lDisplay) {
+      // Receiver only knows its synthetic buffer latency
+      lDisplay.textContent = Math.round(bufferLatencyMatch) + "ms";
+    }
+  }
+}, 500);
+
 function updateStatus(status, text) {
-    const indicator = document.getElementById('statusIndicator');
-    const statusText = document.getElementById('statusText');
-    indicator.className = 'status-indicator ' + status;
-    statusText.textContent = text;
+  const indicator = document.getElementById("statusIndicator");
+  const statusText = document.getElementById("statusText");
+  indicator.className = "status-indicator " + status;
+  statusText.textContent = text;
 }
 
-document.getElementById('senderBtn').addEventListener('click', () => setMode('sender'));
-document.getElementById('receiverBtn').addEventListener('click', () => setMode('receiver'));
+document
+  .getElementById("senderBtn")
+  .addEventListener("click", () => setMode("sender"));
+document
+  .getElementById("receiverBtn")
+  .addEventListener("click", () => setMode("receiver"));
