@@ -1,1 +1,32 @@
-// AudioWorkletProcessor for real-time audio processing // This runs in a separate thread for low-latency audio processing class AudioProcessor extends AudioWorkletProcessor { constructor() { super(); this.buffer = new Float32Array(0); this.bufferSize = 1024; // Small buffer for low latency this.currentBuffer = []; } process(inputs, outputs, parameters) { const input = inputs[0]; if (input && input.length > 0) { const channelData = input[0]; // Convert to 16-bit PCM for efficient transmission const pcmData = new Int16Array(channelData.length); for (let i = 0; i < channelData.length; i++) { // Convert float32 [-1, 1] to int16 [-32768, 32767] const sample = Math.max(-1, Math.min(1, channelData[i])); pcmData[i] = sample < 0 ? sample * 32768 : sample * 32767; } // Send audio data to main thread this.port.postMessage({ type: 'audio', data: pcmData.buffer, sampleRate: sampleRate, channels: input.length }); } return true; // Keep processor alive } } registerProcessor('audio-processor', AudioProcessor);
+// AudioWorkletProcessor for real-time audio processing
+// This runs in a separate thread for low-latency audio processing
+class AudioProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.buffer = new Float32Array(0);
+    this.bufferSize = 1024; // Small buffer for low latency
+    this.currentBuffer = [];
+  }
+  process(inputs, outputs, parameters) {
+    const input = inputs[0];
+    if (input && input.length > 0) {
+      const channelData = input[0];
+      // Convert to 16-bit PCM for efficient transmission
+      const pcmData = new Int16Array(channelData.length);
+      for (let i = 0; i < channelData.length; i++) {
+        // Convert float32 [-1, 1] to int16 [-32768, 32767]
+        const sample = Math.max(-1, Math.min(1, channelData[i]));
+        pcmData[i] = sample < 0 ? sample * 32768 : sample * 32767;
+      }
+      // Send audio data to main thread
+      this.port.postMessage({
+        type: 'audio',
+        data: pcmData.buffer,
+        sampleRate: sampleRate,
+        channels: input.length
+      });
+    }
+    return true; // Keep processor alive
+  }
+}
+registerProcessor('audio-processor', AudioProcessor);
