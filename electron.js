@@ -1,4 +1,14 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer } = require('electron');
+
+// ... existing code ...
+
+ipcMain.handle('get-desktop-sources', async () => {
+  const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
+  return sources.map(s => ({
+    id: s.id,
+    name: s.name
+  }));
+});
 const path = require('path');
 const SoundCheckNetwork = require('./network');
 const os = require('os');

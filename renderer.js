@@ -37,8 +37,29 @@ async function initAudioCapture() {
     try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const audioInputs = devices.filter(d => d.kind === 'audioinput');
+
+        // Also fetch desktop sources (internal audio)
+        let desktopSources = [];
+        try {
+            desktopSources = await window.electronAPI.getDesktopSources();
+        } catch (e) {
+            console.warn('Could not fetch desktop sources:', e);
+        }
+
         const select = document.getElementById('audioInput');
-        select.innerHTML = audioInputs.map(d => `<option value="${d.deviceId}">${d.label || 'Microphone'}</option>`).join('');
+
+        let optionsHtml = '<optgroup label="Microphones">';
+        optionsHtml += audioInputs.map(d => `<option value="${d.deviceId}">${d.label || 'Microphone'}</option>`).join('');
+        optionsHtml += '</optgroup>';
+
+        if (desktopSources.length > 0) {
+            optionsHtml += '<optgroup label="System Audio">';
+            // Typically the entire screen is what users want to capture for global system audio
+            optionsHtml += desktopSources.map(s => `<option value="desktop:${s.id}">${s.name}</option>`).join('');
+            optionsHtml += '</optgroup>';
+        }
+
+        select.innerHTML = optionsHtml;
     } catch (err) {
         console.error('Error enumerating audio devices:', err);
     }
@@ -97,17 +118,49 @@ async function startStreaming() {
         await window.electronAPI.startStreaming({ mode: 'sender', port });
 
         audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                deviceId: audioInputId ? { exact: audioInputId } : undefined,
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: false,
-                latency: 0
-            }
-        });
 
-        audioSource = audioContext.createMediaStreamSource(mediaStream);
+        let userMediaConstraints = {};
+        if (audioInputId && audioInputId.startsWith('desktop:')) {
+            const sourceId = audioInputId.replace('desktop:', '');
+            // Request desktop audio loopback
+            userMediaConstraints = {
+                audio: {
+                    mandatory: {
+                        chromeMediaSource: 'desktop'
+                    }
+                },
+                video: {
+                    mandatory: {
+                        chromeMediaSource: 'desktop',
+                        chromeMediaSourceId: sourceId
+                    }
+                }
+            };
+        } else {
+            // Standard microphone
+            userMediaConstraints = {
+                audio: {
+                    deviceId: audioInputId ? { exact: audioInputId } : undefined,
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false,
+                    latency: 0
+                }
+            };
+        }
+
+        mediaStream = await navigator.mediaDevices.getUserMedia(userMediaConstraints);
+
+        // If we captured desktop, it returns both video and audio. We only want the audio track!
+        const audioTrack = mediaStream.getAudioTracks()[0];
+        if (!audioTrack) {
+            throw new Error("No audio track found in the selected source. Your OS might not support loopback for this source.");
+        }
+
+        // Create a new stream with JUST the audio track so the video track is dropped.
+        const audioOnlyStream = new MediaStream([audioTrack]);
+
+        audioSource = audioContext.createMediaStreamSource(audioOnlyStream);
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 256;
         audioSource.connect(analyser);

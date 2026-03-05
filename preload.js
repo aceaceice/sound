@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     stopStreaming: () => ipcRenderer.invoke('stop-streaming'),
     subscribeDevice: (config) => ipcRenderer.send('subscribe-device', config),
     unsubscribeDevice: (config) => ipcRenderer.send('unsubscribe-device', config),
+    getDesktopSources: () => ipcRenderer.invoke('get-desktop-sources'),
 
     onAudioData: (callback) => {
         ipcRenderer.on('audio-data', (event, data) => callback(data));
