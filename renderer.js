@@ -53,10 +53,21 @@ async function initAudioCapture() {
         optionsHtml += '</optgroup>';
 
         if (desktopSources.length > 0) {
-            optionsHtml += '<optgroup label="System Audio">';
-            // Typically the entire screen is what users want to capture for global system audio
-            optionsHtml += desktopSources.map(s => `<option value="desktop:${s.id}">${s.name}</option>`).join('');
-            optionsHtml += '</optgroup>';
+            // Find global screens first
+            const screens = desktopSources.filter(s => s.isScreen);
+            const windows = desktopSources.filter(s => !s.isScreen);
+
+            if (screens.length > 0) {
+                optionsHtml += '<optgroup label="System Audio (Entire System)">';
+                optionsHtml += screens.map(s => `<option value="desktop:${s.id}">${s.name === 'Entire Screen' || s.name.includes('Screen') ? 'Global System Audio' : s.name}</option>`).join('');
+                optionsHtml += '</optgroup>';
+            }
+
+            if (windows.length > 0) {
+                optionsHtml += '<optgroup label="System Audio (Specific Application)">';
+                optionsHtml += windows.map(s => `<option value="desktop:${s.id}">${s.name}</option>`).join('');
+                optionsHtml += '</optgroup>';
+            }
         }
 
         select.innerHTML = optionsHtml;

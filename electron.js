@@ -3,10 +3,12 @@ const { app, BrowserWindow, ipcMain, desktopCapturer } = require('electron');
 // ... existing code ...
 
 ipcMain.handle('get-desktop-sources', async () => {
-  const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
+  // fetch both screens and windows, but prioritize screens for global audio loopback
+  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], fetchWindowIcons: false });
   return sources.map(s => ({
     id: s.id,
-    name: s.name
+    name: s.name,
+    isScreen: s.id.startsWith('screen:')
   }));
 });
 const path = require('path');
